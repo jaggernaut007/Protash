@@ -1,0 +1,39 @@
+substitutions:
+  _REGION: europe-west1
+  _SERVICE: ashley-os-landing
+  _IMAGE: ${_REGION}-docker.pkg.dev/$PROJECT_ID/ashley-os/${_SERVICE}:$COMMIT_SHA
+  _OPENAI_SECRET: OPENAI_API_KEY
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_IMAGE}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_IMAGE}
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image
+      - ${_IMAGE}
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --set-env-vars
+      - NODE_ENV=production,BOARD_STORAGE_MODE=memory
+      - --set-secrets
+      - OPENAI_API_KEY=${_OPENAI_SECRET}:latest
+
+images:
+  - ${_IMAGE}

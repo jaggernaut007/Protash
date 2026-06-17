@@ -1,0 +1,47 @@
+{
+  "name": "ashley-os",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "eval": "npx tsx scripts/eval.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "docker:build": "docker build -t ashley-os:local .",
+    "gcp:bootstrap": "bash scripts/bootstrap-gcp.sh",
+    "gcp:deploy": "bash scripts/deploy-gcp.sh"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.83",
+    "@ai-sdk/openai": "^2.0.88",
+    "@babel/standalone": "^7.26.0",
+    "@types/uuid": "^10.0.0",
+    "ai": "^5.0.115",
+    "framer-motion": "^12.23.26",
+    "lucide-react": "^0.562.0",
+    "next": "^15.5.9",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.8.1",
+    "uuid": "^13.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitest/coverage-v8": "^4.1.8",
+    "autoprefixer": "^10.4.23",
+    "eslint": "^9.16.0",
+    "eslint-config-next": "^15.1.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.8"
+  }
+}

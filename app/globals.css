@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply text-slate-100 bg-slate-950;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-700 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-600;
+  }
+}
+
+@layer components {
+  /* Enterprise panel — clean, professional dark */
+  .panel-enterprise {
+    @apply rounded-xl border border-slate-700/50 bg-slate-900;
+  }
+
+  /* Legacy aliases — kept for components not yet migrated */
+  .panel-steel {
+    @apply rounded-xl border border-slate-700/50 bg-slate-900;
+  }
+
+  .panel-steel-soft {
+    @apply rounded-xl border border-slate-700/40 bg-slate-900/60;
+  }
+
+  .panel-frosted-glass {
+    @apply rounded-xl border border-slate-700/50 bg-slate-900;
+  }
+
+  /* Enterprise input */
+  .input-enterprise {
+    @apply w-full rounded-xl border border-slate-700/60 bg-slate-900 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500/60 transition-colors;
+  }
+
+  /* Legacy alias */
+  .input-steel {
+    @apply w-full rounded-xl border border-slate-700/60 bg-slate-900 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500/60 transition-colors;
+  }
+
+  /* Enterprise button — secondary style */
+  .button-enterprise {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/50 transition-colors;
+  }
+
+  /* Legacy alias */
+  .button-steel {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/50 transition-colors;
+  }
+
+  /* Primary action button */
+  .button-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors;
+  }
+}
