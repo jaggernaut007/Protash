@@ -1,117 +1,306 @@
-# Protash - Super Rapid Prototyper
+# Protash — Intent to Enterprise Prototype in Seconds
 
-A Next.js + Tailwind CSS workspace with a glassmorphic UI, an interactive canvas, and an AI chatbot sidebar. Built with TypeScript and the App Router.
+Describe a business use case in plain English. Protash generates a fully interactive, domain-aware enterprise dashboard — real KPIs, realistic data, Recharts visualizations, and production-quality Tailwind styling — validated by a 6-stage multi-agent pipeline before it ever reaches your screen.
 
-## Features
+**Live demo:** [protash.shreyasjagannath.com](https://protash.shreyasjagannath.com)
 
-- **Glassmorphic UI**: Clean, frosted-glass aesthetic using Tailwind.
-- **Interactive Canvas**: Render and manage components with save/load.
-- **Saved Components**: Persist, list, and reuse canvas items.
-- **AI Chat**: Chatbot sidebar backed by an agent API route.
-- **Orchestration**: Message bus and multi-agent coordination utilities.
+---
+
+## Why Protash
+
+Most prototyping tools produce generic wireframes. Stakeholders see "Lorem ipsum" and "User A" and immediately check out.
+
+Protash takes the opposite approach: it reads your intent, extracts domain entities, KPIs, and workflows specific to your industry, and generates a React component wired with plausible data — "Acme Corp | $142,000 | Proposal | Sarah Chen | 12 days" rather than placeholders. The result looks like something your engineering team actually built, not an AI artifact.
+
+The pipeline is also self-healing. If the generated code has a runtime bug or fails business-alignment checks, agents flag the blockers and request a targeted fix — up to five correction rounds — before returning anything to the user.
+
+---
+
+## How the Pipeline Works
+
+A single request passes through six sequential stages:
+
+```
+User Intent
+    │
+    ▼
+┌─────────────────────────────────────────────────────┐
+│  Stage 1 · businessContextAgent                     │
+│  Extracts domain, entities, KPIs, workflows,        │
+│  recommended chart types, and a hypothesis          │
+│  (e.g. "what must stakeholders validate in 5 min?") │
+└────────────────────┬────────────────────────────────┘
+                     │ BusinessContext
+                     ▼
+┌─────────────────────────────────────────────────────┐
+│  Stage 2 · specAgent                                │
+│  Produces the screen spec: primary screen name,     │
+│  named UI components, data model, interaction       │
+│  pattern, and BDD success criteria                  │
+└────────────────────┬────────────────────────────────┘
+                     │ Spec
+                     ▼
+┌─────────────────────────────────────────────────────┐
+│  Stage 3 · uxArchitectAgent                         │
+│  Selects layout, chart types (Recharts API names),  │
+│  color accents, header copy, and 8-10 rows of       │
+│  realistic domain-specific mock data                │
+└────────────────────┬────────────────────────────────┘
+                     │ UXPlan
+                     ▼
+┌─────────────────────────────────────────────────────┐
+│  Stage 4 · generatePrototypeCode                    │
+│  Generates a self-contained React component.        │
+│  No external imports — everything runs in a         │
+│  sandboxed Babel renderer in the browser.           │
+└────────┬───────────────────────────────┬────────────┘
+         │                               │
+         ▼ (parallel)                    ▼ (parallel)
+┌────────────────┐             ┌─────────────────────┐
+│  Stage 5 · QA  │             │  Stage 6 · Reviewer │
+│  Data realism  │             │  Business alignment │
+│  Visual check  │             │  KPI visibility     │
+│  Blockers: no  │             │  Domain specificity │
+│  placeholders, │             │  On-domain check    │
+│  no blank views│             │                     │
+└────────┬───────┘             └──────────┬──────────┘
+         │                               │
+         └──────────────┬────────────────┘
+                        │ if any blocker:
+                        ▼
+              ┌──────────────────────┐
+              │  Pre-check           │
+              │  frontendAgent       │
+              │  Runtime safety:     │
+              │  JSX syntax, hook    │
+              │  ordering, no fetch  │
+              │  calls, null Context │
+              └──────────┬───────────┘
+                         │ hard-fail
+                         ▼
+                  ← Code Fix Request →
+                  (up to 5 iterations)
+                         │ all approved
+                         ▼
+                  Rendered Component
+```
+
+All structured outputs are validated against Zod schemas at the boundary of each stage. An agent that returns malformed JSON causes that stage to retry rather than silently passing bad data downstream.
+
+---
+
+## Sandboxed Browser Renderer
+
+Generated components run entirely in the browser — no server round-trips after the initial generation. The renderer:
+
+1. Transpiles the incoming JSX/TSX string with `@babel/standalone` (preset: `react` + `typescript`, classic runtime).
+2. Pre-injects React hooks, Recharts, and other globals so components can use them without `import` statements.
+3. Dynamically evaluates the module and mounts the exported default function into a React error boundary.
+
+This means the component you see is _exactly_ what would run in a Next.js project. It also lets the sandboxed environment catch real runtime errors (bad hook ordering, null context access, etc.) and surface them in the UI as actionable messages rather than browser crashes.
+
+---
+
+## Agent Communication
+
+Agents communicate through a typed `MessageBus` that supports both direct agent-to-agent messages and pub/sub topic subscriptions:
+
+```
+Orchestrator ──publish──▶ MessageBus ──route──▶ frontendAgent
+                                     ──route──▶ qaAgent
+                                     ──route──▶ reviewerAgent
+
+Topics:
+  codegen:complete  – canvas renders the approved component
+  codegen:error     – error state surfaced without rendering bad code
+```
+
+The orchestrator runs agents in a configurable loop (`maxIterations = 5`). If an agent rejects, it triggers a targeted `requestCodeFix` call that passes the specific blockers as a diff prompt rather than regenerating from scratch — faster and cheaper than a full re-run.
+
+---
+
+## Model Economics
+
+Protash uses **DeepSeek-V3** (`deepseek-chat`) for all pipeline stages:
+
+| Tier | Use | Model |
+|------|-----|-------|
+| Orchestrator | Stages 1–4, code fixes | `deepseek-chat` |
+| Worker | Stages 5–6, pre-check, evals | `deepseek-chat` |
+
+DeepSeek-V3 is priced at **$0.27/M input tokens** — roughly 18× cheaper than GPT-4o — while matching or exceeding it on coding benchmarks. A full 6-stage pipeline run (including parallel eval agents) typically costs under $0.01.
+
+The AI SDK layer uses a custom `fetch` wrapper to rewrite `role: "developer"` → `role: "system"` before the request leaves the process, working around an ai-sdk v2 behaviour that causes DeepSeek to reject the request.
+
+---
 
 ## Tech Stack
 
-- **Framework**: Next.js 15 (App Router)
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **AI SDKs**: `ai`, `@ai-sdk/openai`
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 15 (App Router, Edge Runtime) |
+| Language | TypeScript 5.7 |
+| Styling | Tailwind CSS 3 |
+| Sandboxed transpilation | `@babel/standalone` 7 |
+| Charts | Recharts 3 |
+| Animation | Framer Motion 12 |
+| AI SDK | Vercel AI SDK v5 (`ai`, `@ai-sdk/openai`) |
+| AI Model | DeepSeek-V3 via OpenAI-compatible API |
+| Schema validation | Zod 4 |
+| Unit tests | Vitest 4 |
+| E2E tests | Playwright |
+| Containerisation | Docker (standalone Next.js output) |
+| Cloud | GCP Cloud Run + Artifact Registry + Secret Manager |
 
-## Scripts
-
-- `dev`: Start the Next.js dev server
-- `build`: Create a production build
-- `start`: Run the production server
-- `lint`: Lint the project
+---
 
 ## Quick Start
+
+### Prerequisites
+
+- Node.js 20+
+- A [DeepSeek API key](https://platform.deepseek.com/) (free tier available)
 
 ### Install
 
 ```bash
+git clone https://github.com/jaggernaut007/Protash.git
+cd Protash
 npm install
 ```
 
-### Develop
+### Configure
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local`:
+
+```env
+DEEPSEEK_API_KEY=your_deepseek_api_key
+
+# Optional — defaults shown
+BOARD_STORAGE_MODE=file    # 'file' (local) or 'memory' (stateless)
+```
+
+### Run
 
 ```bash
 npm run dev
 ```
 
-Then open http://localhost:3000.
+Open [http://localhost:3000](http://localhost:3000), type a business use case, and hit generate.
 
-### Build & Run
+---
 
-```bash
-npm run build
-npm start
+## Project Structure
+
+```
+app/
+  api/
+    agent/route.ts          Edge API: orchestrates the 6-stage pipeline
+    board/route.ts          Board CRUD (intents, artifacts)
+    mood-asset/route.ts     Mood-board asset generation
+  page.tsx                  Root shell
+
+components/
+  Canvas.tsx                Resizable canvas host
+  CanvasWithSavePanel.tsx   Canvas + save/load UI
+  ChatbotSidebar.tsx        Prompt input and chat history
+  DynamicCanvasRenderer.tsx Babel sandbox + Recharts injector
+
+context/
+  CodeContext.tsx           Global code state (current component)
+  SavedComponentContext.tsx Saved component list state
+
+lib/
+  agents.ts                 All 6 pipeline agents + Agent interface
+  agentContracts.ts         Zod schemas for inter-stage typed outputs
+  aiConfig.ts               DeepSeek client + model constants
+  messageBus.ts             Typed pub/sub message bus
+  multiAgentOrchestrator.ts Iteration loop, fix requests, summary
+  designLanguage.ts         Shared Tailwind class conventions injected into prompts
+  boardStore.ts             File / in-memory board persistence
+
+types/
+  babel-standalone.d.ts     Type shims for Babel in the browser
+
+scripts/
+  bootstrap-gcp.sh          One-shot GCP resource provisioning
+  deploy-gcp.sh             Cloud Run deploy
 ```
 
-## Environment
+---
 
-Copy `.env.example` to `.env.local` and set `OPENAI_API_KEY`.
+## Design Language
 
-- `OPENAI_API_KEY`: required for AI routes
-- `BOARD_STORAGE_MODE=file|memory`: optional
-- Local development defaults to `file`
-- Hosted production defaults to `memory`
+Generated components follow a shared design system defined in `lib/designLanguage.ts` and injected into every code-gen prompt. The key conventions:
 
-## Deployment Notes
+| Purpose | Tailwind classes |
+|---------|-----------------|
+| Primary panels | `.panel-steel`, `.panel-frosted-glass` |
+| Soft containers | `.panel-steel-soft` |
+| Buttons | `.button-steel` |
+| Inputs | `.input-steel` |
+| Sizing | `w-full h-full`, `rounded-2xl` / `rounded-3xl` |
 
-- The app is deploy-safe on platforms like Vercel.
-- Board state is ephemeral in hosted production unless you replace the in-memory store with persistent storage.
-- Local development still persists the board to `.data/board.json`.
-- The included GCP path targets Cloud Run because this project uses dynamic API routes and server-side OpenAI calls.
+The global stylesheet reads `data-theme="day" | "night"` from the `<html>` element and switches CSS variables accordingly, so all generated components automatically support dark mode without code changes.
+
+---
+
+## Storage
+
+| Mode | Where | Persistence |
+|------|-------|-------------|
+| `file` (default, local) | `.data/board.json` | Survives restarts |
+| `memory` (default, hosted) | In-process Map | Resets on restart / scale-out |
+
+To add durable production storage, replace the store implementation in `lib/boardStore.ts` with Firestore, Cloud SQL, or an equivalent — the interface is a simple async key-value abstraction.
+
+---
+
+## Running Tests
+
+```bash
+npm test            # Vitest unit tests
+npm run eval        # LLM eval suite (scripts/eval.ts)
+npx playwright test # End-to-end tests
+```
+
+---
 
 ## GCP Deployment
 
-This repo now includes a Cloud Run deployment path for the landing page app.
-
-### What gets deployed
-
-- A standalone Next.js production server in a Docker container
-- A Cloud Build pipeline defined in `cloudbuild.yaml`
-- Shell scripts in `scripts/` to bootstrap GCP resources and deploy
-- Runtime secret injection from Secret Manager for `OPENAI_API_KEY`
-
-### Prerequisites
-
-- `gcloud` CLI authenticated to your GCP account
-- Docker available locally if you want to test the image with `npm run docker:build`
-- A GCP project with billing enabled
+The repo ships a full Cloud Run pipeline:
 
 ### 1. Bootstrap GCP resources
 
-Set your project and optionally your OpenAI key in the shell:
-
 ```bash
 export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west1"
-export REPOSITORY="ashley-os"
-export OPENAI_API_KEY="your-rotated-openai-key"
+export REPOSITORY="protash"
+export DEEPSEEK_API_KEY="your-key"
 npm run gcp:bootstrap
 ```
 
-This enables the required APIs, creates the Artifact Registry repository if needed, and creates or updates the `OPENAI_API_KEY` secret.
+Enables required APIs, creates the Artifact Registry repository, and stores the API key in Secret Manager.
 
-### 2. Deploy to Cloud Run
+### 2. Deploy
 
 ```bash
 export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west1"
-export SERVICE="ashley-os-landing"
-export REPOSITORY="ashley-os"
+export SERVICE="protash-landing"
+export REPOSITORY="protash"
 npm run gcp:deploy
 ```
 
-The deployment pipeline will:
+The pipeline builds a standalone Next.js Docker image, pushes it to Artifact Registry, and deploys to Cloud Run with:
 
-- Build the container image
-- Push it to Artifact Registry
-- Deploy the app to Cloud Run
-- Set `NODE_ENV=production`
-- Force `BOARD_STORAGE_MODE=memory` for deploy-safe ephemeral storage
-- Mount `OPENAI_API_KEY` from Secret Manager
+- `NODE_ENV=production`
+- `BOARD_STORAGE_MODE=memory` (stateless, safe for scale-out)
+- `DEEPSEEK_API_KEY` mounted from Secret Manager
 
 ### 3. Local production check
 
@@ -120,65 +309,18 @@ npm run build
 npm run docker:build
 ```
 
-### Notes
+---
 
-- Cloud Run is stateless. Saved board data resets across revisions and instance restarts while `BOARD_STORAGE_MODE=memory` is used.
-- If you need persistent board data in production, move `lib/boardStore.ts` to Firestore, Cloud SQL, or another durable store.
-- Do not deploy with the current `.env.local` key. Rotate it first and store the new value in Secret Manager.
+## Contributing
 
-## Project Structure (key files)
+1. Fork and clone the repo.
+2. Create a feature branch off `main`.
+3. Make your changes with tests where applicable.
+4. Open a pull request — describe the intent, not just the diff.
 
-```
-app/
-  globals.css
-  layout.tsx
-  page.tsx
-  PreloadLibs.tsx
-  api/
-    agent/
-      route.ts
-components/
-  Canvas.tsx
-  CanvasWithSavePanel.tsx
-  ChatbotSidebar.tsx
-  DynamicCanvasRenderer.tsx
-  SavedComponentsPanel.tsx
-context/
-  CodeContext.tsx
-  SavedComponentContext.tsx
-lib/
-  agents.ts
-  messageBus.ts
-  multiAgentOrchestrator.ts
-  useSavedComponents.ts
-types/
-  babel-standalone.d.ts
-```
+Issues and ideas welcome on the [GitHub issue tracker](https://github.com/jaggernaut007/Protash/issues).
 
-## Notable Modules
-
-- **Canvas & Renderer**: `Canvas.tsx`, `DynamicCanvasRenderer.tsx` for drawing and dynamic component rendering; `CanvasWithSavePanel.tsx` pairs the canvas with a save UI.
-- **Saved Components**: `SavedComponentsPanel.tsx` and `useSavedComponents.ts` manage persistence and retrieval.
-- **Chatbot**: `ChatbotSidebar.tsx` provides the UI; the API lives in `app/api/agent/route.ts`.
-- **Orchestrator & Bus**: `multiAgentOrchestrator.ts` and `messageBus.ts` coordinate agent workflows and events.
-- **Contexts**: `CodeContext.tsx`, `SavedComponentContext.tsx` share state across the app.
-
-## Development Notes
-
-- Tailwind setup is defined in `tailwind.config.ts` and global styles in `app/globals.css`.
-- TypeScript config lives in `tsconfig.json`; Next.js config in `next.config.ts`.
-- If you use the VS Code task, a background `dev` task is available.
-
-## Design Language for Generated Components
-
-- Shared guidance lives in `lib/designLanguage.ts` and is injected into coding agents.
-- Use the following classes for consistent visuals:
-  - Panels: `.panel-steel`, `.panel-steel-soft`, `.panel-frosted-glass`
-  - Buttons: `.button-steel`
-  - Inputs: `.input-steel`
-  - Layout: `w-full h-full`, `rounded-2xl`/`rounded-3xl`, responsive spacing
-- Theme awareness: the page sets `data-theme` to `day` or `night`; global CSS adapts accordingly.
-- The canvas wraps generated components with `.panel-steel-soft` for cohesion.
+---
 
 ## License
 
