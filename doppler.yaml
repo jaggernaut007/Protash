@@ -1,0 +1,6 @@
+# Doppler project/config mapping for this repo.
+# Run `doppler login` once, then `doppler setup` picks these up automatically.
+# Local dev uses the `dev` config; CI/Cloud Run deploy uses `prd` (see scripts/deploy-gcp.sh).
+setup:
+  project: protash
+  config: dev

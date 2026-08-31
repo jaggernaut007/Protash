@@ -150,7 +150,8 @@ The AI SDK layer uses a custom `fetch` wrapper to rewrite `role: "developer"` �
 | Unit tests | Vitest 4 |
 | E2E tests | Playwright |
 | Containerisation | Docker (standalone Next.js output) |
-| Cloud | GCP Cloud Run + Artifact Registry + Secret Manager |
+| Cloud | GCP Cloud Run + Artifact Registry |
+| Secrets | Doppler (project: `protash`) |
 
 ---
 
@@ -171,18 +172,24 @@ npm install
 
 ### Configure
 
+Secrets are managed in [Doppler](https://doppler.com) (project: `protash`), not `.env` files.
+
 ```bash
-cp .env.example .env.local
+doppler login
+doppler setup          # reads doppler.yaml -> protash / dev
 ```
 
-Edit `.env.local`:
+The `dev`, `start`, and `eval` npm scripts are already wrapped in `doppler run`,
+so `DEEPSEEK_API_KEY` and friends are injected automatically. Set or edit values
+with `doppler secrets set DEEPSEEK_API_KEY=...` or the Doppler dashboard.
 
-```env
-DEEPSEEK_API_KEY=your_deepseek_api_key
+`dev` also has:
 
-# Optional — defaults shown
+```
 BOARD_STORAGE_MODE=file    # 'file' (local) or 'memory' (stateless)
 ```
+
+To run without Doppler, `cp .env.example .env.local` and fill in real values.
 
 ### Run
 
@@ -280,11 +287,11 @@ The repo ships a full Cloud Run pipeline:
 export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west1"
 export REPOSITORY="protash"
-export DEEPSEEK_API_KEY="your-key"
 npm run gcp:bootstrap
 ```
 
-Enables required APIs, creates the Artifact Registry repository, and stores the API key in Secret Manager.
+Enables Cloud Run / Cloud Build / Artifact Registry APIs and creates the
+Artifact Registry repository. No Secret Manager — runtime secrets live in Doppler.
 
 ### 2. Deploy
 
@@ -293,14 +300,19 @@ export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west1"
 export SERVICE="protash-landing"
 export REPOSITORY="protash"
+# Read-only Doppler service token for protash/prd
+# (dashboard.doppler.com -> protash -> prd -> Access -> Service Tokens)
+export DOPPLER_TOKEN="dp.st.prd.xxxxxxxx"
 npm run gcp:deploy
 ```
 
-The pipeline builds a standalone Next.js Docker image, pushes it to Artifact Registry, and deploys to Cloud Run with:
+The pipeline builds a standalone Next.js Docker image, pushes it to Artifact
+Registry, pulls the `protash/prd` config from Doppler, and deploys to Cloud Run
+with those values as env vars:
 
 - `NODE_ENV=production`
 - `BOARD_STORAGE_MODE=memory` (stateless, safe for scale-out)
-- `DEEPSEEK_API_KEY` mounted from Secret Manager
+- `DEEPSEEK_API_KEY` from Doppler
 
 ### 3. Local production check
 
