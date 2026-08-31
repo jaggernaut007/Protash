@@ -10,6 +10,11 @@ Intent to Enterprise Prototype in Seconds. Multi-agent dashboard builder generat
 - Shadcn/ui components
 - Multi-agent orchestration (agentic pipeline, 6 stages)
 
+## Secrets
+- Managed in Doppler (project: `protash`, configs: `dev` / `stg` / `prd`). Not GCP Secret Manager, not committed `.env` files.
+- `doppler login && doppler setup` once; `dev` / `start` / `eval` npm scripts wrap `doppler run`.
+- Deploy pulls `protash/prd` via a `DOPPLER_TOKEN` service token (see `scripts/deploy-gcp.sh`).
+
 ## Commands
 - `npm install` — install deps
 - `npm run dev` — dev server (localhost:5173)
