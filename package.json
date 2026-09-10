@@ -1,5 +1,5 @@
 {
-  "name": "ashley-os",
+  "name": "protash",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,7 +10,7 @@
     "eval": "doppler run -- npx tsx scripts/eval.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "docker:build": "docker build -t ashley-os:local .",
+    "docker:build": "docker build -t protash:local .",
     "gcp:bootstrap": "bash scripts/bootstrap-gcp.sh",
     "gcp:deploy": "bash scripts/deploy-gcp.sh"
   },

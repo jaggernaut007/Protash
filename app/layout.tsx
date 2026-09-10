@@ -5,7 +5,7 @@ import PreloadLibs from './PreloadLibs';
 
 export const metadata: Metadata = {
   title: 'Protash — Enterprise Prototyping',
-  description: 'Domain-driven enterprise prototype generation in under 5 minutes.',
+  description: 'Domain-driven enterprise prototype generation in under a minute.',
 };
 
 export default function RootLayout({
