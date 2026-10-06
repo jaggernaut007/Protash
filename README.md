@@ -298,7 +298,7 @@ Artifact Registry repository. No Secret Manager — runtime secrets live in Dopp
 ```bash
 export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west1"
-export SERVICE="protash-landing"
+export SERVICE="protash"   # script default; set another value only for a different service
 export REPOSITORY="protash"
 # Read-only Doppler service token for protash/prd
 # (dashboard.doppler.com -> protash -> prd -> Access -> Service Tokens)
@@ -311,8 +311,32 @@ Registry, pulls the `protash/prd` config from Doppler, and deploys to Cloud Run
 with those values as env vars:
 
 - `NODE_ENV=production`
-- `BOARD_STORAGE_MODE=memory` (stateless, safe for scale-out)
-- `DEEPSEEK_API_KEY` from Doppler
+- `BOARD_STORAGE_MODE=memory` (board and Plaid state live in instance memory and reset on a cold start)
+- Every non-`DOPPLER_` key in `protash/prd` (`DEEPSEEK_API_KEY`, `CRON_SECRET`, and so on) as a plain Cloud Run env var
+
+Deploy flags: `--allow-unauthenticated`, `--memory 512Mi`, `--max-instances` (default `1`,
+override with `MAX_INSTANCES`) and `--timeout` (default `300`, override with `REQUEST_TIMEOUT`).
+The deploy machine needs `python3` and the `doppler` CLI. Override the Doppler source with
+`DOPPLER_PROJECT` and `DOPPLER_CONFIG`.
+
+**Required secret:** set `CRON_SECRET` in `protash/prd`. The admin routes
+(`/api/discord/notify`, `/api/plaid/*`, `/api/visa/evidence`) return `503` while it is unset.
+Callers send it in the `x-cron-secret` header.
+
+### Model
+
+All LLM calls use DeepSeek V4.1 Flash (API ID `deepseek-flash`, which points to the latest Flash release). `lib/aiConfig.ts` sets the token budget and
+thinking mode for each role:
+
+| Profile | Used by | Thinking | Max output tokens |
+|---|---|---|---|
+| `structured` | stages 1-3 (JSON) | off | 4,096 |
+| `evaluator` | QA, reviewer, safety | off | 2,048 |
+| `codegen` | first component | on, effort `high` | 32,768 |
+| `revision` | fixes after review | on, effort `low` | 24,576 |
+
+Reasoning tokens share the output budget. A reply with `finish_reason: length` is cut off and is
+never sent to the preview.
 
 ### 3. Local production check
 
