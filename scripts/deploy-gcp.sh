@@ -12,7 +12,7 @@ DOPPLER_CONFIG="${DOPPLER_CONFIG:-prd}"
 # The cap also limits LLM cost from anonymous traffic. Raise it only after the state moves out of memory.
 MAX_INSTANCES="${MAX_INSTANCES:-1}"
 # A request runs up to about 11 LLM calls, and code generation uses extended reasoning.
-REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-300}"
+REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-600}"
 
 if [[ -z "${PROJECT_ID}" ]]; then
   echo "PROJECT_ID is required."

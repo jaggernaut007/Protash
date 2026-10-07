@@ -16,6 +16,19 @@ import type { BusinessContext, Spec, UXPlan } from './agentContracts';
 
 export const MAX_REVIEW_ROUNDS = 3;
 
+/**
+ * Time budget for one request, in ms. It stays under the Cloud Run request timeout (600s by default),
+ * so a slow model returns the best reviewed code instead of a gateway error.
+ */
+export const DEFAULT_BUDGET_MS = 420_000;
+/** One revision call (up to 120s) plus one QA and review round. */
+const REGENERATION_ESTIMATE_MS = 135_000;
+
+function budgetMs(): number {
+  const fromEnv = Number(process.env.PIPELINE_BUDGET_MS);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_BUDGET_MS;
+}
+
 export type StageName =
   | 'Business Context'
   | 'Spec'
@@ -41,6 +54,10 @@ export async function runPrototypePipeline(
   fullIntent: string,
   onStage: (stage: StageName, data: Record<string, unknown>) => void = () => {}
 ): Promise<PipelineResult> {
+  const startedAt = Date.now();
+  const budget = budgetMs();
+  const hasTimeForRegeneration = () => Date.now() - startedAt + REGENERATION_ESTIMATE_MS < budget;
+
   const businessContext = await businessContextAgent(fullIntent);
   onStage('Business Context', { businessContext });
 
@@ -55,7 +72,7 @@ export async function runPrototypePipeline(
 
   // Pre-check: frontend safety (one fix attempt)
   const safety = await frontendAgent.evaluate(fullIntent, code);
-  if (!safety.approved) {
+  if (!safety.approved && hasTimeForRegeneration()) {
     code = await generatePrototypeCode(fullIntent, businessContext, spec, uxPlan, code, [safety.feedback]);
   }
 
@@ -77,6 +94,8 @@ export async function runPrototypePipeline(
       break;
     }
     if (round === MAX_REVIEW_ROUNDS) break;
+    // Out of time: return the code that the last round reviewed.
+    if (!hasTimeForRegeneration()) break;
 
     const blockers = [
       ...(!qa.approved ? (qa.suggestions ?? []).slice(0, 3) : []),

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { applyProfile, MODEL_PROFILES, DEEPSEEK_MODEL, ORCHESTRATOR_MODEL, WORKER_MODEL } from '@/lib/aiConfig';
+import {
+  applyProfile,
+  codegenEffort,
+  MODEL_PROFILES,
+  DEEPSEEK_MODEL,
+  ORCHESTRATOR_MODEL,
+  WORKER_MODEL,
+} from '@/lib/aiConfig';
 
 describe('model selection', () => {
   it('uses DeepSeek Flash for every tier', () => {
@@ -25,9 +32,23 @@ describe('MODEL_PROFILES', () => {
     expect(MODEL_PROFILES.evaluator.thinking).toBe('disabled');
   });
 
-  it('uses less reasoning for a revision than for the first pass', () => {
-    expect(MODEL_PROFILES.codegen.reasoningEffort).toBe('high');
+  it('keeps the reasoning effort low, which scored higher and ran faster in the evals', () => {
+    expect(MODEL_PROFILES.codegen.reasoningEffort).toBe('low');
     expect(MODEL_PROFILES.revision.reasoningEffort).toBe('low');
+  });
+});
+
+describe('codegenEffort', () => {
+  it('accepts low, high and max', () => {
+    expect(codegenEffort('low', 'high')).toBe('high');
+    expect(codegenEffort('low', 'max')).toBe('max');
+    expect(codegenEffort('high', 'low')).toBe('low');
+  });
+
+  it('falls back for an unset or invalid value', () => {
+    expect(codegenEffort('low', undefined)).toBe('low');
+    expect(codegenEffort('low', 'turbo')).toBe('low');
+    expect(codegenEffort('low', '')).toBe('low');
   });
 });
 
@@ -55,7 +76,7 @@ describe('applyProfile', () => {
   it('sends thinking and reasoning_effort for a thinking profile', () => {
     const out = applyProfile(base, MODEL_PROFILES.codegen);
     expect(out.thinking).toEqual({ type: 'enabled' });
-    expect(out.reasoning_effort).toBe('high');
+    expect(out.reasoning_effort).toBe(MODEL_PROFILES.codegen.reasoningEffort);
   });
 
   it('disables thinking and sends no reasoning_effort for a plain profile', () => {

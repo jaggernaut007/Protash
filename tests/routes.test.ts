@@ -165,11 +165,11 @@ describe('POST /api/prototype', () => {
     expect(res.status).toBe(200);
   });
 
-  it('rate limits a client after 6 requests in a minute', async () => {
+  it('rate limits a client after 15 requests in a minute', async () => {
     pipeline.runPrototypePipeline.mockResolvedValue({ code: 'c', approved: true });
     const { POST } = await import('@/app/api/prototype/route');
     const body = { context: { intentDescription: 'sales dashboard' } };
-    for (let i = 0; i < 6; i++) expect((await POST(post('/api/prototype', body))).status).toBe(200);
+    for (let i = 0; i < 15; i++) expect((await POST(post('/api/prototype', body))).status).toBe(200);
     const blocked = await POST(post('/api/prototype', body));
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get('Retry-After')).toBeTruthy();

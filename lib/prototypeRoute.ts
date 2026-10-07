@@ -14,7 +14,8 @@ import { CodeGenerationError } from './agents';
 export const MAX_BODY_BYTES = 512 * 1024;
 export const MAX_INTENT_CHARS = 4000;
 export const MAX_REFINEMENT_CHARS = 2000;
-export const RATE_LIMIT = 6;
+// One request takes 40-120s, so 15 a minute is far above normal use. It still bounds anonymous cost.
+export const RATE_LIMIT = 15;
 export const RATE_WINDOW_MS = 60_000;
 
 export const PrototypeRequestSchema = z.object({

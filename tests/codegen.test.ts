@@ -77,6 +77,14 @@ describe('generatePrototypeCode', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
   });
 
+  it('turns a model timeout into CodeGenerationError and passes an abort signal', async () => {
+    const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+    generateText.mockRejectedValueOnce(timeout);
+    await expect(run()).rejects.toBeInstanceOf(CodeGenerationError);
+    expect(generateText.mock.calls[0][0].abortSignal).toBeInstanceOf(AbortSignal);
+    expect(generateText).toHaveBeenCalledTimes(1); // no retry: the budget is spent
+  });
+
   it('uses the codegen model for a first pass and the revision model for a fix', async () => {
     generateText.mockResolvedValue(reply(VALID));
     await run();

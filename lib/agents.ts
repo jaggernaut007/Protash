@@ -216,13 +216,24 @@ The component must export default a function, fill w-full h-full, and use Rechar
 
   // Two attempts. The second attempt runs only after a cut-off or a syntax error.
   for (let attempt = 1; attempt <= MAX_CODEGEN_ATTEMPTS; attempt++) {
-    const { text, usage, finishReason } = await generateText({
-      model: deepseekModel(profile),
-      system: `You are an expert React developer building enterprise prototype dashboards.
+    let result: Awaited<ReturnType<typeof generateText>>;
+    try {
+      result = await generateText({
+        model: deepseekModel(profile),
+        system: `You are an expert React developer building enterprise prototype dashboards.
 Generate production-quality React components using Tailwind CSS and Recharts.
 All data must be hardcoded with realistic domain-specific values — no placeholder text.`,
-      prompt: prompt + retryNote,
-    });
+        prompt: prompt + retryNote,
+        // A stuck reasoning call must not use the whole request budget.
+        abortSignal: AbortSignal.timeout(CODEGEN_TIMEOUT_MS[profile as 'codegen' | 'revision']),
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw new CodeGenerationError('The model took too long to respond.');
+      }
+      throw error;
+    }
+    const { text, usage, finishReason } = result;
 
     console.log('[agents:CodeGen] Token usage', {
       attempt,
@@ -249,6 +260,9 @@ All data must be hardcoded with realistic domain-specific values — no placehol
 }
 
 const MAX_CODEGEN_ATTEMPTS = 2;
+
+/** Time limit for one code-generation call, in ms. The revision call reasons less, so it gets less time. */
+export const CODEGEN_TIMEOUT_MS = { codegen: 180_000, revision: 120_000 } as const;
 
 const COMPACT_RETRY_NOTE =
   'Keep the component compact: under 350 lines, at most 5 sub-components, at most 6 rows per table, short inline data. Finish the whole component.';

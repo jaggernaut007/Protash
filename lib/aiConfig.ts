@@ -29,13 +29,23 @@ export interface ProfileSettings {
   maxTokens: number;
 }
 
+/** Reasoning effort for the first code generation. Set DEEPSEEK_CODEGEN_EFFORT to tune it without a code change. */
+export function codegenEffort(
+  fallback: 'low' | 'high' | 'max',
+  value: string | undefined = process.env.DEEPSEEK_CODEGEN_EFFORT
+): 'low' | 'high' | 'max' {
+  return value === 'low' || value === 'high' || value === 'max' ? value : fallback;
+}
+
 export const MODEL_PROFILES: Record<ModelProfile, ProfileSettings> = {
   // Short JSON documents (stages 1-3). Thinking adds latency and no value here.
   structured: { thinking: 'disabled', maxTokens: 4096 },
   // Approve / reject verdicts (QA, reviewer, frontend safety). A verdict is about 250 tokens.
   evaluator: { thinking: 'disabled', maxTokens: 2048 },
   // First code generation (stage 4). Reasoning plans the component. Code is 6K-12K tokens.
-  codegen: { thinking: 'enabled', reasoningEffort: 'high', maxTokens: 32768 },
+  // Evals (8 cases, 2026-10-07): low effort scored 8.7 in 523s with no cut-off. High effort scored 8.4
+  // in 916s, and one case used 22K reasoning tokens and hit the limit.
+  codegen: { thinking: 'enabled', reasoningEffort: codegenEffort('low'), maxTokens: 32768 },
   // Fixing a known list of blockers. Low effort keeps the request inside the Cloud Run timeout.
   revision: { thinking: 'enabled', reasoningEffort: 'low', maxTokens: 24576 },
 };

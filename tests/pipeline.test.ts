@@ -60,6 +60,20 @@ describe('runPrototypePipeline', () => {
     expect(result.code).toBe('code-v2');
   });
 
+  it('stops regenerating when the time budget is spent and returns reviewed code', async () => {
+    vi.stubEnv('PIPELINE_BUDGET_MS', '1000'); // less than one regeneration estimate
+    try {
+      agents.qaAgent.evaluate.mockResolvedValue(no('QA'));
+      agents.reviewerAgent.evaluate.mockResolvedValue(ok('Reviewer'));
+      const result = await runPrototypePipeline('intent');
+      expect(result.approved).toBe(false);
+      expect(agents.generatePrototypeCode).toHaveBeenCalledTimes(1);
+      expect(result.code).toBe(agents.qaAgent.evaluate.mock.calls[0][1]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('reports every stage in order', async () => {
     agents.qaAgent.evaluate.mockResolvedValue(ok('QA'));
     agents.reviewerAgent.evaluate.mockResolvedValue(ok('Reviewer'));
