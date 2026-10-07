@@ -8,6 +8,11 @@ SERVICE="${SERVICE:-protash}"
 REPOSITORY="${REPOSITORY:-protash}"
 DOPPLER_PROJECT="${DOPPLER_PROJECT:-protash}"
 DOPPLER_CONFIG="${DOPPLER_CONFIG:-prd}"
+# Board and Plaid state live in instance memory, so one instance keeps the state consistent.
+# The cap also limits LLM cost from anonymous traffic. Raise it only after the state moves out of memory.
+MAX_INSTANCES="${MAX_INSTANCES:-1}"
+# A request runs up to about 11 LLM calls, and code generation uses extended reasoning.
+REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-600}"
 
 if [[ -z "${PROJECT_ID}" ]]; then
   echo "PROJECT_ID is required."
@@ -52,6 +57,8 @@ gcloud run deploy "${SERVICE}" \
   --platform managed \
   --allow-unauthenticated \
   --memory 512Mi \
+  --max-instances "${MAX_INSTANCES}" \
+  --timeout "${REQUEST_TIMEOUT}" \
   --env-vars-file "${ENV_FILE}"
 
 echo "Deployment complete."

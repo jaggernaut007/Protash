@@ -1,15 +1,39 @@
 /**
- * GET /api/board - Get current board
- * POST /api/board/intent - Create intent
- * PUT /api/board/intent/:id - Update intent
- * DELETE /api/board/intent/:id - Delete intent
+ * GET  /api/board - Get current board
+ * POST /api/board - body { action, data }
+ *   action: createIntent | updateIntent | deleteIntent | resetBoard
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { boardStore } from "@/lib/boardStore";
 import { vectorIndex } from "@/lib/vectorIndex";
-import { Intent, CreateIntentRequest } from "@/types/board";
+import { Intent } from "@/types/board";
 import { v4 as uuidv4 } from "uuid";
+import { rateLimit, readJsonBody } from "@/lib/apiGuard";
+
+const MAX_BODY_BYTES = 64 * 1024;
+
+const CreateIntentSchema = z.object({
+  title: z.string().max(200),
+  description: z.string().max(8000),
+  domain: z.string().max(100).optional(),
+});
+
+// Only these fields can change. Callers cannot overwrite id, boardId, artifacts or createdAt.
+const UpdateIntentSchema = z.object({
+  intentId: z.string().min(1).max(100),
+  title: z.string().max(200).optional(),
+  description: z.string().max(8000).optional(),
+  domain: z.string().max(100).optional(),
+  status: z.enum(["draft", "active", "resolved", "archived"]).optional(),
+});
+
+const IntentIdSchema = z.object({ intentId: z.string().min(1).max(100) });
+
+const ResetBoardSchema = z
+  .object({ title: z.string().max(200).optional(), description: z.string().max(2000).optional() })
+  .default({});
 
 export async function GET() {
   try {
@@ -25,19 +49,27 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const limited = rateLimit(request, "board-write", 60, 60_000);
+  if (limited) return limited;
+
+  const raw = await readJsonBody(request, MAX_BODY_BYTES);
+  if (!raw.ok) return raw.response;
+
   try {
-    const body = await request.json();
-    const { action, data } = body;
+    const { action, data } = (raw.data ?? {}) as { action?: string; data?: unknown };
 
     if (action === "createIntent") {
-      const createReq = data as CreateIntentRequest;
+      const parsed = CreateIntentSchema.safeParse(data);
+      if (!parsed.success) {
+        return NextResponse.json({ error: "Invalid intent" }, { status: 400 });
+      }
       const boardId = boardStore.getBoard().id;
       const intent: Intent = {
         id: uuidv4(),
         boardId,
-        title: createReq.title,
-        description: createReq.description,
-        domain: createReq.domain,
+        title: parsed.data.title,
+        description: parsed.data.description,
+        domain: parsed.data.domain,
         status: "draft",
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -53,19 +85,21 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "updateIntent") {
-      if (!data?.intentId) {
+      const parsed = UpdateIntentSchema.safeParse(data);
+      if (!parsed.success) {
         return NextResponse.json({ error: "Missing intentId" }, { status: 400 });
       }
-      const { intentId, ...updates } = data;
+      const { intentId, ...updates } = parsed.data;
       const updated = boardStore.updateIntent(intentId, updates);
       return NextResponse.json({ intent: updated });
     }
 
     if (action === "deleteIntent") {
-      if (!data?.intentId) {
+      const parsed = IntentIdSchema.safeParse(data);
+      if (!parsed.success) {
         return NextResponse.json({ error: "Missing intentId" }, { status: 400 });
       }
-      const { intentId } = data;
+      const { intentId } = parsed.data;
       // Remove the intent's artifacts from the vector index before deletion
       const intentToDelete = boardStore.getIntent(intentId);
       intentToDelete?.artifacts.forEach((a) => vectorIndex.remove(a.id));
@@ -74,8 +108,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "resetBoard") {
-      const { title, description } = data || {};
-      const freshBoard = boardStore.resetBoard(title, description);
+      const parsed = ResetBoardSchema.safeParse(data ?? undefined);
+      if (!parsed.success) {
+        return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+      }
+      const freshBoard = boardStore.resetBoard(parsed.data.title, parsed.data.description);
       vectorIndex.clear();
       return NextResponse.json({ board: freshBoard });
     }

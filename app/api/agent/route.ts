@@ -1,15 +1,26 @@
 import { NextResponse } from 'next/server';
 import { generateText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
-
-const deepseek = createOpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: 'https://api.deepseek.com/v1',
-});
+import { z } from 'zod';
 import { MultiAgentOrchestrator } from '@/lib/multiAgentOrchestrator';
-import { ORCHESTRATOR_MODEL, summarizeUsage } from '@/lib/aiConfig';
+import { deepseekModel, summarizeUsage } from '@/lib/aiConfig';
+import { rateLimit, readJsonBody } from '@/lib/apiGuard';
 
-export const runtime = 'edge';
+// Node runtime: the shared guard uses node:crypto and the agents bundle includes Babel.
+
+const MAX_BODY_BYTES = 256 * 1024;
+const AgentRequestSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().max(8000),
+      })
+    )
+    .max(30)
+    .default([]),
+  currentComponentCode: z.string().max(100_000).nullish(),
+  mode: z.string().optional(),
+});
 
 const COMPONENT_GENERATOR_PROMPT = `You are a React component generator. ALWAYS respond with ONLY valid React component code (TypeScript JSX).
 
@@ -79,12 +90,20 @@ function needsMarketingAgent(query: string): boolean {
 }
 
 export async function POST(req: Request) {
+  const limited = rateLimit(req, 'agent', 10, 60_000);
+  if (limited) return limited;
+
+  const raw = await readJsonBody(req, MAX_BODY_BYTES);
+  if (!raw.ok) return raw.response;
+  const parsed = AgentRequestSchema.safeParse(raw.data);
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  }
+
   try {
-    const body = await req.json();
-    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = 
-      body?.messages || [];
-    const currentComponentCode = body?.currentComponentCode || null;
-    const mode: 'rich' | 'minimal' = body?.mode === 'rich' ? 'rich' : 'minimal';
+    const messages = parsed.data.messages;
+    const currentComponentCode = parsed.data.currentComponentCode || null;
+    const mode: 'rich' | 'minimal' = parsed.data.mode === 'rich' ? 'rich' : 'minimal';
     
     // Get the latest user message as the query
     const userQuery = messages.filter((m) => m.role === 'user').pop()?.content || '';
@@ -130,18 +149,31 @@ Design Guidance (Minimal Mode):
   }
 
     // Step 1: Generate or improve component code using primary generator
-    const { text: generatedCode, usage: generatorUsage } = await generateText({
-      model: deepseek(ORCHESTRATOR_MODEL),
+    const { text: generatedCode, usage: generatorUsage, finishReason } = await generateText({
+      model: deepseekModel(currentComponentCode ? 'revision' : 'codegen'),
       system: systemPrompt,
-      messages: currentComponentCode 
-        ? [{ role: 'user', content: userQuery }] 
+      messages: currentComponentCode
+        ? [{ role: 'user', content: userQuery }]
         : formattedMessages,
     });
 
     console.log('[/api/agent] Token usage (generator)', {
-      userQuery,
+      userQuery: userQuery.slice(0, 80),
+      finishReason,
       ...summarizeUsage(generatorUsage),
     });
+
+    // A cut-off component cannot render. Do not send it to review.
+    if (finishReason === 'length') {
+      return NextResponse.json(
+        {
+          error: 'The generated component was too long. Try a simpler request.',
+          approved: false,
+          summary: 'Generation reached the token limit',
+        },
+        { status: 502 }
+      );
+    }
 
     // Step 2: Determine which agents to use
     const { frontendAgent, qaAgent, reviewerAgent } = await import('@/lib/agents');
