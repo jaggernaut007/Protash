@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
+import os from 'os';
 import path from 'path';
+import { readJsonBody, requireSecret } from '@/lib/apiGuard';
 
-// Persist visa evidence to .data/visa-evidence.json (matches board storage pattern)
-const DATA_DIR = path.join(process.cwd(), '.data');
+// The container user cannot write to /app. Use the OS temp dir (ephemeral on Cloud Run).
+// For data that must survive a restart, move this to GCS or Firestore.
+const DATA_DIR = path.join(os.tmpdir(), 'protash-data');
 const FILE = path.join(DATA_DIR, 'visa-evidence.json');
-
-async function ensureDir() {
-  try { await fs.mkdir(DATA_DIR, { recursive: true }); } catch { /* exists */ }
-}
+const MAX_BODY_BYTES = 256 * 1024;
 
 async function readData() {
   try {
@@ -20,11 +20,14 @@ async function readData() {
 }
 
 async function writeData(data: unknown) {
-  await ensureDir();
+  await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(FILE, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const denied = requireSecret(req, process.env.CRON_SECRET);
+  if (denied) return denied;
+
   const data = await readData();
   if (!data) {
     return NextResponse.json({ error: 'no_data' }, { status: 404 });
@@ -33,14 +36,17 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = requireSecret(req, process.env.CRON_SECRET);
+  if (denied) return denied;
+
+  const body = await readJsonBody(req, MAX_BODY_BYTES);
+  if (!body.ok) return body.response;
+
   try {
-    const body = await req.json();
-    await writeData(body);
+    await writeData(body.data);
     return NextResponse.json({ ok: true, saved_at: new Date().toISOString() });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Failed to save' },
-      { status: 400 }
-    );
+    console.error('[visa/evidence] write failed:', e);
+    return NextResponse.json({ error: 'Failed to save' }, { status: 500 });
   }
 }

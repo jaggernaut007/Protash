@@ -5,7 +5,7 @@ Output dense, direct text. Omit pleasantries.
 Intent to Enterprise Prototype in Seconds. Multi-agent dashboard builder generating domain-aware, data-driven React components with business-logic validation.
 
 ## Stack (pin as adopted)
-- TypeScript + React 18 + Vite
+- TypeScript + React 19 + Next.js 15 (App Router)
 - Tailwind CSS + Recharts for visualizations
 - Shadcn/ui components
 - Multi-agent orchestration (agentic pipeline, 6 stages)

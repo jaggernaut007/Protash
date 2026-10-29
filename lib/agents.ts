@@ -14,7 +14,8 @@
 import { generateText } from 'ai';
 import { AgentResponse } from './messageBus';
 import { designLanguagePrompt } from './designLanguage';
-import { deepseek, ORCHESTRATOR_MODEL, WORKER_MODEL, summarizeUsage } from './aiConfig';
+import { deepseekModel, summarizeUsage, type ModelProfile } from './aiConfig';
+import { checkComponentCode } from './codeCheck';
 import {
   BusinessContextSchema,
   SpecSchema,
@@ -49,7 +50,7 @@ function extractJSON(text: string): unknown {
 
 export async function businessContextAgent(intentDescription: string): Promise<BusinessContext> {
   const { text, usage } = await generateText({
-    model: deepseek.chat(ORCHESTRATOR_MODEL),
+    model: deepseekModel('structured'),
     system: `You are a business analyst and domain expert. Extract structured business context from a prototype intent description.
 Be specific and concrete — use real domain terminology, actual KPI names, and realistic entity names.
 Respond ONLY with valid JSON matching the requested schema. No markdown, no explanations.`,
@@ -76,7 +77,7 @@ Return JSON with these fields:
 
 export async function specAgent(context: BusinessContext): Promise<Spec> {
   const { text, usage } = await generateText({
-    model: deepseek.chat(ORCHESTRATOR_MODEL),
+    model: deepseekModel('structured'),
     system: `You are a product designer creating a concise prototype specification.
 Focus on what a stakeholder needs to see to validate the business hypothesis in under 5 minutes.
 Respond ONLY with valid JSON. No markdown, no explanations.`,
@@ -111,7 +112,7 @@ Set fileUploadRequired to true only if the domain inherently requires importing 
 
 export async function uxArchitectAgent(context: BusinessContext, spec: Spec): Promise<UXPlan> {
   const { text, usage } = await generateText({
-    model: deepseek.chat(ORCHESTRATOR_MODEL),
+    model: deepseekModel('structured'),
     system: `You are a senior UX architect specializing in enterprise B2B dashboards.
 Your job is to define the exact visual structure, chart selections, and realistic mock data.
 Respond ONLY with valid JSON. No markdown, no explanations.`,
@@ -208,17 +209,74 @@ ${revisionNote}
 Return ONLY the React component code. No markdown fences, no explanations.
 The component must export default a function, fill w-full h-full, and use Recharts for charts.`;
 
-  const { text, usage } = await generateText({
-    model: deepseek.chat(ORCHESTRATOR_MODEL),
-    system: `You are an expert React developer building enterprise prototype dashboards.
+  // A revision fixes known blockers, so it needs less reasoning than the first pass.
+  const profile: ModelProfile = priorCode ? 'revision' : 'codegen';
+  let retryNote = '';
+  let lastProblem = '';
+
+  // Two attempts. The second attempt runs only after a cut-off or a syntax error.
+  for (let attempt = 1; attempt <= MAX_CODEGEN_ATTEMPTS; attempt++) {
+    let result: Awaited<ReturnType<typeof generateText>>;
+    try {
+      result = await generateText({
+        model: deepseekModel(profile),
+        system: `You are an expert React developer building enterprise prototype dashboards.
 Generate production-quality React components using Tailwind CSS and Recharts.
 All data must be hardcoded with realistic domain-specific values — no placeholder text.`,
-    prompt,
-  });
+        prompt: prompt + retryNote,
+        // A stuck reasoning call must not use the whole request budget.
+        abortSignal: AbortSignal.timeout(CODEGEN_TIMEOUT_MS[profile as 'codegen' | 'revision']),
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw new CodeGenerationError('The model took too long to respond.');
+      }
+      throw error;
+    }
+    const { text, usage, finishReason } = result;
 
-  console.log('[agents:CodeGen] Token usage', summarizeUsage(usage));
+    console.log('[agents:CodeGen] Token usage', {
+      attempt,
+      profile,
+      finishReason,
+      ...summarizeUsage(usage),
+    });
 
-  // Strip any accidental markdown fences
+    if (finishReason === 'length') {
+      lastProblem = 'The output reached the token limit and was cut off.';
+      retryNote = COMPACT_RETRY_NOTE;
+      continue;
+    }
+
+    const code = stripFences(text);
+    const check = checkComponentCode(code);
+    if (check.ok) return code;
+
+    lastProblem = `The code does not compile: ${check.error}`;
+    retryNote = `\n\nYOUR PREVIOUS ANSWER FAILED: ${lastProblem}\nReturn the complete component again, with valid syntax and every tag closed. ${COMPACT_RETRY_NOTE}`;
+  }
+
+  throw new CodeGenerationError(lastProblem);
+}
+
+const MAX_CODEGEN_ATTEMPTS = 2;
+
+/** Time limit for one code-generation call, in ms. The revision call reasons less, so it gets less time. */
+export const CODEGEN_TIMEOUT_MS = { codegen: 180_000, revision: 120_000 } as const;
+
+const COMPACT_RETRY_NOTE =
+  'Keep the component compact: under 350 lines, at most 5 sub-components, at most 6 rows per table, short inline data. Finish the whole component.';
+
+/** The model did not return a component that compiles. The route returns a generic error. */
+export class CodeGenerationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CodeGenerationError';
+  }
+}
+
+// Strip any accidental markdown fences
+function stripFences(text: string): string {
   const fenceMatch = text.match(/```(?:\w+)?\s*([\s\S]*?)```/);
   return fenceMatch ? fenceMatch[1].trim() : text.trim();
 }
@@ -254,7 +312,7 @@ Respond ONLY in JSON:
 
   evaluate: async (userQuery: string, generatedCode: string): Promise<AgentResponse> => {
     const { text, usage } = await generateText({
-      model: deepseek.chat(WORKER_MODEL),
+      model: deepseekModel('evaluator'),
       system: qaAgent.systemPrompt,
       prompt: `Enterprise Context: "${userQuery}"\n\nComponent Code:\n${generatedCode}\n\nEvaluate and respond ONLY with JSON:`,
     });
@@ -304,7 +362,7 @@ Respond ONLY in JSON:
 
   evaluate: async (userQuery: string, generatedCode: string): Promise<AgentResponse> => {
     const { text, usage } = await generateText({
-      model: deepseek.chat(WORKER_MODEL),
+      model: deepseekModel('evaluator'),
       system: reviewerAgent.systemPrompt,
       prompt: `Business Intent: "${userQuery}"\n\nComponent Code:\n${generatedCode}\n\nEvaluate and respond ONLY with JSON:`,
     });
@@ -351,7 +409,7 @@ Respond ONLY in JSON:
 
   evaluate: async (userQuery: string, generatedCode: string): Promise<AgentResponse> => {
     const { text, usage } = await generateText({
-      model: deepseek.chat(WORKER_MODEL),
+      model: deepseekModel('evaluator'),
       system: frontendAgent.systemPrompt,
       prompt: `Request: "${userQuery}"\n\nCode:\n${generatedCode}\n\nSafety check — respond ONLY with JSON:`,
     });

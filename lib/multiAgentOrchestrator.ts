@@ -6,7 +6,7 @@
 import { MessageBus, AgentResponse } from './messageBus';
 import { allAgents, Agent } from './agents';
 import { generateText } from 'ai';
-import { deepseek, ORCHESTRATOR_MODEL } from './aiConfig';
+import { deepseekModel } from './aiConfig';
 
 export interface OrchestrationResult {
   approved: boolean;
@@ -153,7 +153,7 @@ Suggestions: ${agentResponse.suggestions?.join(', ') || 'None'}
 Please provide the improved code. Return ONLY the fixed code without any explanation or markdown formatting.`;
 
     const { text } = await generateText({
-      model: deepseek(ORCHESTRATOR_MODEL),
+      model: deepseekModel('structured'),
       prompt: fixPrompt,
     });
 

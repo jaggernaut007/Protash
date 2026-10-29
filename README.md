@@ -298,7 +298,7 @@ Artifact Registry repository. No Secret Manager — runtime secrets live in Dopp
 ```bash
 export PROJECT_ID="your-gcp-project-id"
 export REGION="europe-west1"
-export SERVICE="protash-landing"
+export SERVICE="protash"   # script default; set another value only for a different service
 export REPOSITORY="protash"
 # Read-only Doppler service token for protash/prd
 # (dashboard.doppler.com -> protash -> prd -> Access -> Service Tokens)
@@ -311,8 +311,38 @@ Registry, pulls the `protash/prd` config from Doppler, and deploys to Cloud Run
 with those values as env vars:
 
 - `NODE_ENV=production`
-- `BOARD_STORAGE_MODE=memory` (stateless, safe for scale-out)
-- `DEEPSEEK_API_KEY` from Doppler
+- `BOARD_STORAGE_MODE=memory` (board and Plaid state live in instance memory and reset on a cold start)
+- Every non-`DOPPLER_` key in `protash/prd` (`DEEPSEEK_API_KEY`, `CRON_SECRET`, and so on) as a plain Cloud Run env var
+
+Deploy flags: `--allow-unauthenticated`, `--memory 512Mi`, `--max-instances` (default `1`,
+override with `MAX_INSTANCES`) and `--timeout` (default `600`, override with `REQUEST_TIMEOUT`).
+A prototype request has a 420s time budget (`PIPELINE_BUDGET_MS`). Each code-generation call stops
+after 180s (first pass) or 120s (revision). When the budget runs out, the route returns the code that
+the last review round checked.
+The deploy machine needs `python3` and the `doppler` CLI. Override the Doppler source with
+`DOPPLER_PROJECT` and `DOPPLER_CONFIG`.
+
+**Required secret:** set `CRON_SECRET` in `protash/prd`. The admin routes
+(`/api/discord/notify`, `/api/plaid/*`, `/api/visa/evidence`) return `503` while it is unset.
+Callers send it in the `x-cron-secret` header.
+
+### Model
+
+All LLM calls use DeepSeek V4.1 Flash (API ID `deepseek-flash`, which points to the latest Flash release). `lib/aiConfig.ts` sets the token budget and
+thinking mode for each role:
+
+| Profile | Used by | Thinking | Max output tokens |
+|---|---|---|---|
+| `structured` | stages 1-3 (JSON) | off | 4,096 |
+| `evaluator` | QA, reviewer, safety | off | 2,048 |
+| `codegen` | first component | on, effort `low` (set `DEEPSEEK_CODEGEN_EFFORT` to `high` or `max` to change) | 32,768 |
+| `revision` | fixes after review | on, effort `low` | 24,576 |
+
+Eval result (`npm run eval`, 8 cases): low effort averaged 8.7/10 in 523s with no cut-off. High effort
+averaged 8.4/10 in 916s, and one case used 22K reasoning tokens and hit the limit.
+
+Reasoning tokens share the output budget. A reply with `finish_reason: length` is cut off and is
+never sent to the preview.
 
 ### 3. Local production check
 

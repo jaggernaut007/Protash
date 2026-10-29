@@ -9,15 +9,8 @@
  */
 
 import { EVAL_CASES } from '../evals/intents';
-import {
-  businessContextAgent,
-  specAgent,
-  uxArchitectAgent,
-  generatePrototypeCode,
-  frontendAgent,
-  qaAgent,
-  reviewerAgent,
-} from '../lib/agents';
+import { runPrototypePipeline } from '../lib/pipeline';
+import { checkComponentCode } from '../lib/codeCheck';
 import { scorePrototype, runDeterministicChecks } from '../lib/evalScorer';
 import type { ScoreResult } from '../lib/evalScorer';
 import * as fs from 'fs';
@@ -45,45 +38,31 @@ async function runCase(evalCase: typeof EVAL_CASES[number]): Promise<EvalRunResu
   console.log(`▶ ${evalCase.id}: ${evalCase.intent.substring(0, 70)}…`);
 
   try {
-    // Run 6-stage pipeline
-    console.log('  [1] Business Context…');
-    const businessContext = await businessContextAgent(evalCase.intent);
+    // Run the same shared pipeline as /api/prototype. Log the time of each stage.
+    const stageTimes: Record<string, number> = {};
+    let last = start;
+    const { code, approved, businessContext, spec, uxPlan } = await runPrototypePipeline(
+      evalCase.intent,
+      (stage) => {
+        const now = Date.now();
+        stageTimes[stage] = Math.round((now - last) / 1000);
+        last = now;
+      }
+    );
+    console.log(
+      `  Stage seconds: ${Object.entries(stageTimes).map(([k, v]) => `${k}=${v}`).join(' ')}`
+    );
 
-    console.log('  [2] Spec…');
-    const spec = await specAgent(businessContext);
-
-    console.log('  [3] UX Architecture…');
-    const uxPlan = await uxArchitectAgent(businessContext, spec);
-
-    console.log('  [4] Code Generation…');
-    let code = await generatePrototypeCode(evalCase.intent, businessContext, spec, uxPlan);
-
-    // Safety pre-check
-    const safety = await frontendAgent.evaluate(evalCase.intent, code);
-    if (!safety.approved) {
-      code = await generatePrototypeCode(evalCase.intent, businessContext, spec, uxPlan, code, [safety.feedback]);
-    }
-
-    // Parallel QA + Review
-    console.log('  [5+6] QA + Review…');
-    let approved = false;
-    for (let i = 0; i < 3; i++) {
-      const [qa, review] = await Promise.all([
-        qaAgent.evaluate(evalCase.intent, code),
-        reviewerAgent.evaluate(evalCase.intent, code),
-      ]);
-      if (qa.approved && review.approved) { approved = true; break; }
-      const blockers = [
-        ...(!qa.approved ? (qa.suggestions ?? []).slice(0, 2) : []),
-        ...(!review.approved ? (review.suggestions ?? []).slice(0, 2) : []),
-      ];
-      code = await generatePrototypeCode(evalCase.intent, businessContext, spec, uxPlan, code, blockers);
-    }
+    // A component that does not compile cannot render. The reviewers do not check this.
+    const compile = checkComponentCode(code);
 
     // Score
     console.log('  [Score] Evaluating…');
     const deterministicResult = runDeterministicChecks(evalCase, code, businessContext);
+    if (!compile.ok) deterministicResult.failures.push(`Code does not compile: ${compile.error}`);
+    deterministicResult.passed = deterministicResult.failures.length === 0;
     const score = await scorePrototype(evalCase, code, businessContext, spec, uxPlan);
+    if (!compile.ok) score.passed = false;
 
     const durationMs = Date.now() - start;
 

@@ -5,7 +5,7 @@
 
 import { generateText } from 'ai';
 import { z } from 'zod';
-import { deepseek, WORKER_MODEL } from './aiConfig';
+import { deepseekModel } from './aiConfig';
 import { parseAgentOutput } from './agentContracts';
 import type { EvalCase } from '../evals/intents';
 import type { BusinessContext, Spec, UXPlan } from './agentContracts';
@@ -106,7 +106,7 @@ export async function scorePrototype(
   const deterministicPenalty = deterministicResult.failures.length > 0 ? 3 : 0;
 
   const { text } = await generateText({
-    model: deepseek(WORKER_MODEL),
+    model: deepseekModel('structured'),
     system: `You are an enterprise prototype quality evaluator. Score the generated prototype on 5 dimensions (0-10 each).
 Be strict and honest. A score of 10 means production-ready. A score below 5 means significant issues.
 Respond ONLY with valid JSON.`,

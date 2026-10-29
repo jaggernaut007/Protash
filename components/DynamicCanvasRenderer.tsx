@@ -32,11 +32,6 @@ export default function DynamicCanvasRenderer({ code: propCode, className }: Dyn
     namedIdents?: Array<{ name: string; alias?: string }>; // e.g., {name:'debounce', alias:'debounce'}
   };
 
-  const cdnCache = (typeof window !== "undefined" && (window as any).__CDN_MODULE_CACHE__) || new Map<string, any>();
-  if (typeof window !== "undefined") {
-    (window as any).__CDN_MODULE_CACHE__ = cdnCache;
-  }
-
   function parseImports(source: string): ImportSpec[] {
     const specs: ImportSpec[] = [];
     const importRegex = /import\s+([\s\S]*?)\s+from\s+["']([^"']+)["'];?/g;
@@ -85,15 +80,6 @@ export default function DynamicCanvasRenderer({ code: propCode, className }: Dyn
     return source
       .replace(/^import(?:\s+type)?\s+[\s\S]*?from\s+["'][^"']+["'];?\n?/gm, '')
       .replace(/^import\s+["'][^"']+["'];?\n?/gm, '');
-  }
-
-  async function loadFromCdn(spec: string): Promise<any> {
-    const url = `https://esm.sh/${spec}?target=es2022`;
-    if (cdnCache.has(url)) return cdnCache.get(url);
-    // @ts-ignore - external URL dynamic import
-    const mod = await import(/* webpackIgnore: true */ url);
-    cdnCache.set(url, mod);
-    return mod;
   }
 
   function isExternal(spec: string): boolean {
@@ -173,7 +159,8 @@ export default function DynamicCanvasRenderer({ code: propCode, className }: Dyn
             // Use webpack-bundled module by package spec (avoids CDN React instance mismatch)
             mod = globals[imp.spec];
           } else {
-            mod = await loadFromCdn(imp.spec);
+            // Generated code must not pull arbitrary packages into the page origin.
+            throw new Error(`Import "${imp.spec}" is not allowed. Use the pre-injected React and Recharts APIs.`);
           }
 
           // default identifier

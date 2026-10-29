@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTransactionSummary, getAccessToken } from '@/lib/plaid';
 import { sendEmail, buildDailyBriefHtml } from '@/lib/resend';
+import { requireSecret } from '@/lib/apiGuard';
 
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL!;
-const NOTIFY_TO = process.env.RESEND_TO_EMAIL ?? 'shreyasjag@hotmail.com';
-const CRON_SECRET = process.env.CRON_SECRET;
 const BASELINE = 1300;
 
 // Category → emoji mapping
@@ -21,12 +19,14 @@ function getCatEmoji(cat: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  // Auth: allow manual dashboard button OR Cloud Scheduler with CRON_SECRET header.
-  const callerSecret = req.headers.get('x-cron-secret');
-  const isScheduler = !!callerSecret;
-  if (isScheduler && CRON_SECRET && callerSecret !== CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Auth: the caller (Cloud Scheduler or a trusted script) must send the CRON_SECRET header.
+  // The route fails closed when CRON_SECRET is not set.
+  const denied = requireSecret(req, process.env.CRON_SECRET);
+  if (denied) return denied;
+
+  // Read env at request time, so tests and rotated secrets take effect.
+  const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+  const NOTIFY_TO = process.env.RESEND_TO_EMAIL;
 
   const now = new Date().toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -55,7 +55,8 @@ export async function POST(req: NextRequest) {
         .join('\n');
 
       finSummary = `${status} **${tx.currencySymbol}${totalSpend.toFixed(0)}** / ${tx.currencySymbol}${BASELINE} (${pct}%)\n\n${catLines}\n\n📉 Remaining: **${tx.currencySymbol}${remaining.toFixed(0)}**`;
-    } catch {
+    } catch (e) {
+      console.error('[discord/notify] Transaction fetch failed:', e);
       finSummary = '_Error fetching transactions_';
     }
   }
@@ -83,13 +84,14 @@ export async function POST(req: NextRequest) {
     });
 
     if (!discordRes.ok) {
-      const body = await discordRes.text();
-      errors.push(`Discord: ${body}`);
+      console.error('[discord/notify] Discord rejected the message:', discordRes.status, await discordRes.text());
+      errors.push('Discord: delivery failed');
     }
   }
 
   // ─── Resend Email ─────────────────────────────────────────────────────────
-  try {
+  // No recipient configured: skip the email. Do not fall back to a hardcoded address.
+  if (NOTIFY_TO) try {
     const html = buildDailyBriefHtml({
       date: now,
       totalSpend,
@@ -105,7 +107,8 @@ export async function POST(req: NextRequest) {
       html,
     });
   } catch (e) {
-    errors.push(`Email: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    console.error('[discord/notify] Email failed:', e);
+    errors.push('Email: delivery failed');
   }
 
   if (errors.length > 0) {

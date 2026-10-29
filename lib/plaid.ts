@@ -14,7 +14,7 @@ const SECRET = process.env.PLAID_SECRET!;
 
 // In-memory access token store (single-user OS).
 // Survives warm Cloud Run requests; resets on cold start.
-// For cross-restart persistence, store token in GCP Secret Manager.
+// For cross-restart persistence, store the token in a persistent store (not an env var).
 let cachedAccessToken: string | null = null;
 
 export function setAccessToken(token: string) {

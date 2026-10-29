@@ -5,12 +5,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { boardStore } from "@/lib/boardStore";
 import { vectorIndex } from "@/lib/vectorIndex";
-import { SearchBoardRequest } from "@/types/board";
+import { z } from "zod";
+import { rateLimit, readJsonBody } from "@/lib/apiGuard";
+
+// The UI sends the intent text (up to 4000 chars) as the query.
+const SearchSchema = z.object({
+  query: z.string().max(5000),
+  limit: z.number().int().min(1).max(50).optional(),
+  type: z
+    .enum(["decision", "constraint", "preference", "prototype", "specArtifact", "taskUI"])
+    .optional(),
+});
 
 export async function POST(request: NextRequest) {
+  const limited = rateLimit(request, "search", 60, 60_000);
+  if (limited) return limited;
+
+  const raw = await readJsonBody(request, 16 * 1024);
+  if (!raw.ok) return raw.response;
+
+  const parsed = SearchSchema.safeParse(raw.data);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid search request" }, { status: 400 });
+  }
+
   try {
-    const body = await request.json();
-    const searchReq = body as SearchBoardRequest;
+    const searchReq = parsed.data;
 
     // Re-index artifacts (incremental: only artifacts, preserving file entries)
     const board = boardStore.getBoard();
