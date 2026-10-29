@@ -26,6 +26,19 @@ fi
 command -v doppler >/dev/null || { echo "doppler CLI not found. https://docs.doppler.com/docs/install-cli"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 not found (needed to render the env file)."; exit 1; }
 
+# Fail before the build when a secret that a route needs is missing.
+# CRON_SECRET guards the admin routes. They answer 503 without it.
+# RESEND_TO_EMAIL has no default in the code.
+REQUIRED_SECRETS="${REQUIRED_SECRETS:-DEEPSEEK_API_KEY CRON_SECRET RESEND_TO_EMAIL}"
+for key in ${REQUIRED_SECRETS}; do
+  if ! doppler secrets get "${key}" --plain \
+      --project "${DOPPLER_PROJECT}" --config "${DOPPLER_CONFIG}" >/dev/null 2>&1; then
+    echo "Missing secret ${key} in Doppler ${DOPPLER_PROJECT}/${DOPPLER_CONFIG}."
+    echo "Set it: doppler secrets set ${key}=<value> --project ${DOPPLER_PROJECT} --config ${DOPPLER_CONFIG}"
+    exit 1
+  fi
+done
+
 gcloud config set project "${PROJECT_ID}" >/dev/null
 
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}"
