@@ -2,8 +2,9 @@
  * Central AI configuration.
  * Use this to control which model powers each pipeline stage and how it runs.
  *
- * Model: DeepSeek V4.1 Flash (released 2026-09-10; 1M context, 384K max output).
+ * Model: DeepSeek V4.1 Flash, build 1017 (released 2026-10-17; 1M context, 384K max output).
  * The API ID `deepseek-flash` always points to the latest Flash release. It has no version pin.
+ * The 1017 build changed no request parameters and no prices.
  * The old IDs `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are temporary aliases.
  * Sources: https://api-docs.deepseek.com/updates/ and https://api-docs.deepseek.com/quick_start/pricing
  *

@@ -121,14 +121,18 @@ The orchestrator runs agents in a configurable loop (`maxIterations = 5`). If an
 
 ## Model Economics
 
-Protash uses **DeepSeek-V3** (`deepseek-chat`) for all pipeline stages:
+Protash uses **DeepSeek V4.1 Flash** (API ID `deepseek-flash`, build DeepSeek-V4.1-Flash-1017) for all pipeline stages.
+See [Model](#model) for the token budget of each stage.
 
-| Tier | Use | Model |
-|------|-----|-------|
-| Orchestrator | Stages 1–4, code fixes | `deepseek-chat` |
-| Worker | Stages 5–6, pre-check, evals | `deepseek-chat` |
+Price per 1M tokens ([source](https://api-docs.deepseek.com/quick_start/pricing), checked 2026-11-02):
 
-DeepSeek-V3 is priced at **$0.27/M input tokens** — roughly 18× cheaper than GPT-4o — while matching or exceeding it on coding benchmarks. A full 6-stage pipeline run (including parallel eval agents) typically costs under $0.01.
+| Token type | Off-peak | Peak |
+|---|---|---|
+| Input (cache hit) | $0.003 | $0.006 |
+| Input (cache miss) | $0.15 | $0.30 |
+| Output | $0.60 | $1.20 |
+
+Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday to Friday.
 
 The AI SDK layer uses a custom `fetch` wrapper to rewrite `role: "developer"` → `role: "system"` before the request leaves the process, working around an ai-sdk v2 behaviour that causes DeepSeek to reject the request.
 
@@ -145,7 +149,7 @@ The AI SDK layer uses a custom `fetch` wrapper to rewrite `role: "developer"` �
 | Charts | Recharts 3 |
 | Animation | Framer Motion 12 |
 | AI SDK | Vercel AI SDK v5 (`ai`, `@ai-sdk/openai`) |
-| AI Model | DeepSeek-V3 via OpenAI-compatible API |
+| AI Model | DeepSeek V4.1 Flash (`deepseek-flash`) via OpenAI-compatible API |
 | Schema validation | Zod 4 |
 | Unit tests | Vitest 4 |
 | E2E tests | Playwright |
@@ -328,7 +332,7 @@ Callers send it in the `x-cron-secret` header.
 
 ### Model
 
-All LLM calls use DeepSeek V4.1 Flash (API ID `deepseek-flash`, which points to the latest Flash release). `lib/aiConfig.ts` sets the token budget and
+All LLM calls use DeepSeek V4.1 Flash, build 1017 (API ID `deepseek-flash`, which points to the latest Flash release). `lib/aiConfig.ts` sets the token budget and
 thinking mode for each role:
 
 | Profile | Used by | Thinking | Max output tokens |
@@ -338,7 +342,7 @@ thinking mode for each role:
 | `codegen` | first component | on, effort `low` (set `DEEPSEEK_CODEGEN_EFFORT` to `high` or `max` to change) | 32,768 |
 | `revision` | fixes after review | on, effort `low` | 24,576 |
 
-Eval result (`npm run eval`, 8 cases): low effort averaged 8.7/10 in 523s with no cut-off. High effort
+Eval result (`npm run eval`, 8 cases, 2026-10-07, before build 1017): low effort averaged 8.7/10 in 523s with no cut-off. High effort
 averaged 8.4/10 in 916s, and one case used 22K reasoning tokens and hit the limit.
 
 Reasoning tokens share the output budget. A reply with `finish_reason: length` is cut off and is
