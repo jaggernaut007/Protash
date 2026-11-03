@@ -43,5 +43,11 @@
     "tsx": "^4.22.4",
     "typescript": "^5.7.2",
     "vitest": "^4.1.8"
+  },
+  "overrides": {
+    "undici": "^6.29.1",
+    "next": {
+      "postcss": "^8.5.32"
+    }
   }
 }
