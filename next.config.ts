@@ -2,20 +2,38 @@ import type { NextConfig } from 'next';
 
 const isProd = process.env.NODE_ENV === 'production';
 
-// 'unsafe-eval' is needed by @babel/standalone and the generated-component renderer.
-// 'unsafe-eval' also allows the Next dev runtime to work.
+// The Next dev runtime needs 'unsafe-eval' and a websocket. Production does not.
+const devScript = isProd ? '' : " 'unsafe-eval'";
+const devConnect = isProd ? '' : ' ws: wss:';
+
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+  `script-src 'self' 'unsafe-inline'${devScript}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  `connect-src 'self'${isProd ? '' : ' ws: wss:'}`,
+  `connect-src 'self'${devConnect}`,
+  "frame-src 'self'",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
+].join('; ');
+
+// /sandbox runs generated code in an opaque-origin iframe (see components/DynamicCanvasRenderer.tsx).
+// Babel and the compiled component need 'unsafe-eval'. Block every network path out of the frame.
+const sandboxCsp = [
+  "default-src 'none'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  `connect-src ${isProd ? "'none'" : "'self' ws: wss:"}`,
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'self'",
 ].join('; ');
 
 const securityHeaders = [
@@ -37,7 +55,17 @@ const nextConfig: NextConfig = {
     return [{ source: '/favicon.ico', destination: '/icon.svg' }];
   },
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
+    return [
+      { source: '/:path*', headers: securityHeaders },
+      // The last match wins for a repeated key. These override the global CSP and frame headers.
+      {
+        source: '/sandbox',
+        headers: [
+          { key: 'Content-Security-Policy', value: sandboxCsp },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        ],
+      },
+    ];
   },
 };
 
