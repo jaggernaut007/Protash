@@ -134,6 +134,22 @@ Price per 1M tokens ([source](https://api-docs.deepseek.com/quick_start/pricing)
 
 Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday to Friday.
 
+### Spend cap
+
+The routes are public, so the app caps LLM spend in code (`acquireLlmSlot` in `lib/apiGuard.ts`).
+Per-IP limits alone do not stop an attacker with many IP addresses.
+
+| Limit | Scope | Default | Env var |
+|---|---|---|---|
+| Runs per UTC day | All clients | 200 | `LLM_DAILY_RUN_LIMIT` (0 stops all runs) |
+| Runs in progress | All clients | 4 | `LLM_MAX_CONCURRENT_RUNS` |
+| Prototype runs | Per IP | 15/min, 20/hour | — |
+| Agent runs | Per IP | 10/min, 30/hour | — |
+
+One run costs up to about $0.30 at peak prices, so the default daily cap keeps the LLM bill near $60 a day or less.
+The state is in memory. It is global only while `--max-instances` is 1, and it resets when the instance restarts.
+Keep a low prepaid balance on the DeepSeek account and turn off auto top-up. That balance is the hard limit.
+
 The AI SDK layer uses a custom `fetch` wrapper to rewrite `role: "developer"` → `role: "system"` before the request leaves the process, working around an ai-sdk v2 behaviour that causes DeepSeek to reject the request.
 
 ---

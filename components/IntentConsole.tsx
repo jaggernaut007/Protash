@@ -154,7 +154,10 @@ export default function IntentConsole({
         }),
       });
 
-      if (!res.ok) throw new Error(`Prototype generation failed: ${res.statusText}`);
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: '' }));
+        throw new Error(error || `Prototype generation failed: ${res.statusText}`);
+      }
       const result = await res.json();
 
       // Mark all remaining stages as done (server-side stages not published via MessageBus in this flow)

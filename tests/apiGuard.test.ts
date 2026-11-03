@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { requireSecret, rateLimit, readJsonBody, resetRateLimits, clientIp } from '@/lib/apiGuard';
+import {
+  requireSecret,
+  rateLimit,
+  readJsonBody,
+  resetRateLimits,
+  clientIp,
+  acquireLlmSlot,
+  resetLlmBudget,
+  DEFAULT_DAILY_RUN_LIMIT,
+  DEFAULT_MAX_CONCURRENT_RUNS,
+} from '@/lib/apiGuard';
 
 function req(headers: Record<string, string> = {}, body?: string) {
   return new Request('http://x/api', { method: 'POST', headers, body });
@@ -60,6 +70,81 @@ describe('rateLimit', () => {
     rateLimit(r(), 'b', 1, 60_000, 0);
     expect(rateLimit(req({ 'x-forwarded-for': '9.9.9.9' }), 'b', 1, 60_000, 1)).toBeNull();
     expect(rateLimit(r(), 'other', 1, 60_000, 1)).toBeNull();
+  });
+});
+
+describe('acquireLlmSlot', () => {
+  const NOON = Date.parse('2026-11-02T12:00:00Z');
+  beforeEach(() => {
+    resetLlmBudget();
+    delete process.env.LLM_DAILY_RUN_LIMIT;
+    delete process.env.LLM_MAX_CONCURRENT_RUNS;
+  });
+
+  it('allows the daily limit of runs, then returns 503 with Retry-After until midnight UTC', () => {
+    process.env.LLM_DAILY_RUN_LIMIT = '3';
+    for (let i = 0; i < 3; i++) {
+      const slot = acquireLlmSlot(NOON);
+      expect(slot.ok).toBe(true);
+      if (slot.ok) slot.release();
+    }
+    const blocked = acquireLlmSlot(NOON);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.response.status).toBe(503);
+      expect(blocked.response.headers.get('Retry-After')).toBe(String(12 * 3600));
+    }
+  });
+
+  it('starts a new budget on the next UTC day', () => {
+    process.env.LLM_DAILY_RUN_LIMIT = '1';
+    const first = acquireLlmSlot(NOON);
+    if (first.ok) first.release();
+    expect(acquireLlmSlot(NOON).ok).toBe(false);
+    expect(acquireLlmSlot(NOON + 86_400_000).ok).toBe(true);
+  });
+
+  it('caps runs in progress and frees the slot on release', () => {
+    process.env.LLM_MAX_CONCURRENT_RUNS = '2';
+    const a = acquireLlmSlot(NOON);
+    const b = acquireLlmSlot(NOON);
+    const c = acquireLlmSlot(NOON);
+    expect([a.ok, b.ok, c.ok]).toEqual([true, true, false]);
+    if (!c.ok) expect(c.response.status).toBe(503);
+    if (a.ok) a.release();
+    expect(acquireLlmSlot(NOON).ok).toBe(true);
+  });
+
+  it('frees only one slot when release is called twice', () => {
+    process.env.LLM_MAX_CONCURRENT_RUNS = '2';
+    const a = acquireLlmSlot(NOON);
+    acquireLlmSlot(NOON);
+    if (a.ok) {
+      a.release();
+      a.release();
+    }
+    expect(acquireLlmSlot(NOON).ok).toBe(true);
+    expect(acquireLlmSlot(NOON).ok).toBe(false);
+  });
+
+  it('stops all runs when LLM_DAILY_RUN_LIMIT is 0', () => {
+    process.env.LLM_DAILY_RUN_LIMIT = '0';
+    expect(acquireLlmSlot(NOON).ok).toBe(false);
+  });
+
+  it('uses the defaults for an invalid env value', () => {
+    process.env.LLM_DAILY_RUN_LIMIT = 'lots';
+    process.env.LLM_MAX_CONCURRENT_RUNS = '-1';
+    const held = Array.from({ length: DEFAULT_MAX_CONCURRENT_RUNS }, () => acquireLlmSlot(NOON));
+    expect(held.every((s) => s.ok)).toBe(true);
+    expect(acquireLlmSlot(NOON).ok).toBe(false);
+    held.forEach((s) => s.ok && s.release());
+    for (let i = DEFAULT_MAX_CONCURRENT_RUNS; i < DEFAULT_DAILY_RUN_LIMIT; i++) {
+      const s = acquireLlmSlot(NOON);
+      expect(s.ok).toBe(true);
+      if (s.ok) s.release();
+    }
+    expect(acquireLlmSlot(NOON).ok).toBe(false);
   });
 });
 

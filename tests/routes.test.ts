@@ -3,11 +3,17 @@ import { NextRequest } from 'next/server';
 import { rmSync } from 'fs';
 import os from 'os';
 import path from 'path';
-import { resetRateLimits } from '@/lib/apiGuard';
+import { resetLlmBudget, resetRateLimits } from '@/lib/apiGuard';
 
-// Mocked boundaries: the LLM pipeline, the bank client and the email client.
+// Mocked boundaries: the LLM pipeline, the LLM call, the bank client and the email client.
 const pipeline = vi.hoisted(() => ({ runPrototypePipeline: vi.fn() }));
 vi.mock('@/lib/pipeline', () => pipeline);
+
+const ai = vi.hoisted(() => ({ generateText: vi.fn() }));
+vi.mock('ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('ai')>()),
+  generateText: ai.generateText,
+}));
 
 const plaid = vi.hoisted(() => ({
   getAccessToken: vi.fn(() => null as string | null),
@@ -40,6 +46,9 @@ function get(url: string, headers: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetRateLimits();
+  resetLlmBudget();
+  delete process.env.LLM_DAILY_RUN_LIMIT;
+  delete process.env.LLM_MAX_CONCURRENT_RUNS;
   delete process.env.CRON_SECRET;
   delete process.env.DISCORD_WEBHOOK_URL;
   delete process.env.RESEND_TO_EMAIL;
@@ -198,6 +207,97 @@ describe('POST /api/prototype', () => {
     expect((await ok.json()).mood).toBe('enterprise');
     const long = await POST(post('/api/mood-asset', { context: { intentDescription: 'x'.repeat(4001) } }));
     expect(long.status).toBe(413);
+  });
+
+  it('rate limits a client after 20 requests in an hour', async () => {
+    pipeline.runPrototypePipeline.mockResolvedValue({ code: 'c', approved: true });
+    const { POST } = await import('@/app/api/prototype/route');
+    const body = { context: { intentDescription: 'sales dashboard' } };
+    vi.useFakeTimers();
+    try {
+      for (let i = 0; i < 20; i++) {
+        expect((await POST(post('/api/prototype', body))).status).toBe(200);
+        vi.advanceTimersByTime(61_000);
+      }
+      expect((await POST(post('/api/prototype', body))).status).toBe(429);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('shared LLM budget', () => {
+  const body = { context: { intentDescription: 'sales dashboard' } };
+  const fromIp = (i: number) => ({ 'x-forwarded-for': `10.0.${Math.floor(i / 256)}.${i % 256}` });
+
+  it('stops a many-IP attack at the daily limit and does not call the pipeline', async () => {
+    process.env.LLM_DAILY_RUN_LIMIT = '5';
+    pipeline.runPrototypePipeline.mockResolvedValue({ code: 'c', approved: true });
+    const proto = await import('@/app/api/prototype/route');
+    const mood = await import('@/app/api/mood-asset/route');
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const handler = i % 2 ? mood.POST : proto.POST;
+      statuses.push((await handler(post('/api/prototype', body, fromIp(i)))).status);
+    }
+    expect(statuses.filter((s) => s === 200)).toHaveLength(5);
+    expect(statuses.filter((s) => s === 503)).toHaveLength(7);
+    expect(pipeline.runPrototypePipeline).toHaveBeenCalledTimes(5);
+  });
+
+  it('caps runs in progress across clients', async () => {
+    process.env.LLM_MAX_CONCURRENT_RUNS = '2';
+    let finish: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    pipeline.runPrototypePipeline.mockImplementation(async () => {
+      await gate;
+      return { code: 'c', approved: true };
+    });
+    const { POST } = await import('@/app/api/prototype/route');
+    const running = [POST(post('/api/prototype', body, fromIp(1))), POST(post('/api/prototype', body, fromIp(2)))];
+    await vi.waitFor(() => expect(pipeline.runPrototypePipeline).toHaveBeenCalledTimes(2));
+    const busy = await POST(post('/api/prototype', body, fromIp(3)));
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get('Retry-After')).toBe('30');
+    finish();
+    expect((await Promise.all(running)).map((r) => r.status)).toEqual([200, 200]);
+    expect((await POST(post('/api/prototype', body, fromIp(4)))).status).toBe(200);
+  });
+
+  it('frees the slot when the pipeline fails', async () => {
+    process.env.LLM_MAX_CONCURRENT_RUNS = '1';
+    pipeline.runPrototypePipeline.mockRejectedValueOnce(new Error('provider down'));
+    pipeline.runPrototypePipeline.mockResolvedValueOnce({ code: 'c', approved: true });
+    const { POST } = await import('@/app/api/prototype/route');
+    expect((await POST(post('/api/prototype', body, fromIp(1)))).status).toBe(500);
+    expect((await POST(post('/api/prototype', body, fromIp(2)))).status).toBe(200);
+  });
+
+  it('does not count an invalid request against the budget', async () => {
+    process.env.LLM_DAILY_RUN_LIMIT = '1';
+    pipeline.runPrototypePipeline.mockResolvedValue({ code: 'c', approved: true });
+    const { POST } = await import('@/app/api/prototype/route');
+    expect((await POST(post('/api/prototype', { context: {} }))).status).toBe(400);
+    expect((await POST(post('/api/prototype', body))).status).toBe(200);
+  });
+
+  it('agent route uses the same budget and makes no LLM call when it is spent', async () => {
+    process.env.LLM_DAILY_RUN_LIMIT = '0';
+    const { POST } = await import('@/app/api/agent/route');
+    const res = await POST(post('/api/agent', { messages: [{ role: 'user', content: 'make a card' }] }));
+    expect(res.status).toBe(503);
+    expect(ai.generateText).not.toHaveBeenCalled();
+  });
+
+  it('agent route frees the slot when the LLM call fails', async () => {
+    process.env.LLM_MAX_CONCURRENT_RUNS = '1';
+    ai.generateText.mockRejectedValueOnce(new Error('provider down'));
+    pipeline.runPrototypePipeline.mockResolvedValueOnce({ code: 'c', approved: true });
+    const agent = await import('@/app/api/agent/route');
+    const res = await agent.POST(post('/api/agent', { messages: [{ role: 'user', content: 'make a card' }] }));
+    expect(res.status).toBe(500);
+    const proto = await import('@/app/api/prototype/route');
+    expect((await proto.POST(post('/api/prototype', body, fromIp(9)))).status).toBe(200);
   });
 });
 

@@ -3,7 +3,7 @@ import { generateText } from 'ai';
 import { z } from 'zod';
 import { MultiAgentOrchestrator } from '@/lib/multiAgentOrchestrator';
 import { deepseekModel, summarizeUsage } from '@/lib/aiConfig';
-import { rateLimit, readJsonBody } from '@/lib/apiGuard';
+import { acquireLlmSlot, rateLimit, readJsonBody } from '@/lib/apiGuard';
 
 // Node runtime: the shared guard uses node:crypto and the agents bundle includes Babel.
 
@@ -90,7 +90,7 @@ function needsMarketingAgent(query: string): boolean {
 }
 
 export async function POST(req: Request) {
-  const limited = rateLimit(req, 'agent', 10, 60_000);
+  const limited = rateLimit(req, 'agent', 10, 60_000) ?? rateLimit(req, 'agent-hour', 30, 3_600_000);
   if (limited) return limited;
 
   const raw = await readJsonBody(req, MAX_BODY_BYTES);
@@ -99,6 +99,9 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
+
+  const slot = acquireLlmSlot();
+  if (!slot.ok) return slot.response;
 
   try {
     const messages = parsed.data.messages;
@@ -203,5 +206,7 @@ Design Guidance (Minimal Mode):
       }, 
       { status: 500 }
     );
+  } finally {
+    slot.release();
   }
 }

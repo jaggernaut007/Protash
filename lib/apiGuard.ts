@@ -5,6 +5,8 @@
  * - Admin routes (Plaid, Discord notify, Visa evidence) use `requireSecret` and fail closed.
  * - Browser routes (prototype, agent, board) cannot hold a secret. They use `rateLimit` and
  *   `readJsonBody` to limit cost and memory use.
+ * - Routes that call the LLM also take a slot from `acquireLlmSlot`. It caps the runs of all
+ *   clients together, so many IP addresses cannot get past it.
  * Rate-limit state is per instance. Deploy with --max-instances to bound the total.
  */
 
@@ -73,6 +75,76 @@ export function rateLimit(
 /** Test helper: clear the rate-limit state. */
 export function resetRateLimits(): void {
   hits.clear();
+}
+
+// One run costs up to about $0.30 at peak prices, so 200 runs a day cap the LLM bill near $60.
+export const DEFAULT_DAILY_RUN_LIMIT = 200;
+export const DEFAULT_MAX_CONCURRENT_RUNS = 4;
+
+let budgetDay = '';
+let runsToday = 0;
+let runsInFlight = 0;
+
+function envInt(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= min ? n : fallback;
+}
+
+export type LlmSlot = { ok: true; release: () => void } | { ok: false; response: NextResponse };
+
+/**
+ * Take one slot from the shared LLM budget. Call `release` in a `finally` block when the run ends.
+ * - LLM_DAILY_RUN_LIMIT: runs in one UTC day for all clients together. 0 stops all runs.
+ * - LLM_MAX_CONCURRENT_RUNS: runs in progress at the same time.
+ * A failed run also counts, because the provider bills its tokens.
+ */
+export function acquireLlmSlot(now: number = Date.now()): LlmSlot {
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (day !== budgetDay) {
+    budgetDay = day;
+    runsToday = 0;
+  }
+
+  if (runsToday >= envInt('LLM_DAILY_RUN_LIMIT', DEFAULT_DAILY_RUN_LIMIT, 0)) {
+    const nextDay = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'The daily generation limit is reached. Try again tomorrow.' },
+        { status: 503, headers: { 'Retry-After': String(Math.ceil((nextDay - now) / 1000)) } }
+      ),
+    };
+  }
+  if (runsInFlight >= envInt('LLM_MAX_CONCURRENT_RUNS', DEFAULT_MAX_CONCURRENT_RUNS, 1)) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: 'The service is busy. Try again in a minute.' },
+        { status: 503, headers: { 'Retry-After': '30' } }
+      ),
+    };
+  }
+
+  runsToday += 1;
+  runsInFlight += 1;
+  let released = false;
+  return {
+    ok: true,
+    release: () => {
+      if (released) return;
+      released = true;
+      runsInFlight -= 1;
+    },
+  };
+}
+
+/** Test helper: clear the LLM budget state. */
+export function resetLlmBudget(): void {
+  budgetDay = '';
+  runsToday = 0;
+  runsInFlight = 0;
 }
 
 export type JsonBody = { ok: true; data: unknown } | { ok: false; response: NextResponse };

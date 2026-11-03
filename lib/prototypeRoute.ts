@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { readJsonBody, rateLimit } from './apiGuard';
+import { acquireLlmSlot, readJsonBody, rateLimit } from './apiGuard';
 import { runPrototypePipeline, type StageName } from './pipeline';
 import { CodeGenerationError } from './agents';
 
@@ -17,6 +17,8 @@ export const MAX_REFINEMENT_CHARS = 2000;
 // One request takes 40-120s, so 15 a minute is far above normal use. It still bounds anonymous cost.
 export const RATE_LIMIT = 15;
 export const RATE_WINDOW_MS = 60_000;
+// The hourly cap stops one client from using the full shared daily budget.
+export const HOURLY_LIMIT = 20;
 
 export const PrototypeRequestSchema = z.object({
   context: z
@@ -34,7 +36,9 @@ export async function handlePrototypeRequest(
     extra?: Record<string, unknown>;
   } = {}
 ): Promise<NextResponse> {
-  const limited = rateLimit(request, 'prototype', RATE_LIMIT, RATE_WINDOW_MS);
+  const limited =
+    rateLimit(request, 'prototype', RATE_LIMIT, RATE_WINDOW_MS) ??
+    rateLimit(request, 'prototype-hour', HOURLY_LIMIT, 3_600_000);
   if (limited) return limited;
 
   const body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -55,6 +59,9 @@ export async function handlePrototypeRequest(
     ? `${context.intentDescription}\nRefinement: ${refinementText}`
     : context.intentDescription;
 
+  const slot = acquireLlmSlot();
+  if (!slot.ok) return slot.response;
+
   try {
     const result = await runPrototypePipeline(fullIntent, options.onStage);
     return NextResponse.json({ ...result, ...options.extra });
@@ -68,5 +75,7 @@ export async function handlePrototypeRequest(
       );
     }
     return NextResponse.json({ error: 'Prototype generation failed' }, { status: 500 });
+  } finally {
+    slot.release();
   }
 }

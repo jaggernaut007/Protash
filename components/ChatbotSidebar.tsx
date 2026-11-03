@@ -103,7 +103,10 @@ export default function ChatbotSidebar() {
         }),
       });
 
-      if (!res.ok) throw new Error('Agent request failed');
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: '' }));
+        throw new Error(error || 'Agent request failed');
+      }
       const data = await res.json();
 
       // Check if multi-agent system approved the component
@@ -172,7 +175,10 @@ export default function ChatbotSidebar() {
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'ai',
-        content: 'I ran into an issue reaching the agent. Please try again.',
+        content:
+          err instanceof Error && err.message !== 'Agent request failed'
+            ? err.message
+            : 'I ran into an issue reaching the agent. Please try again.',
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiMessage]);
